@@ -107,12 +107,15 @@
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
     <script>
         (function () {
-            // ===== COORDINATES PLACEHOLDER =====
-            // Add your geocache coordinates here as [latitude, longitude, "label"] entries.
             const coordinates = [
-                [42.042224968766675, -97.43422780936554, "Cache #1"],
-                [42.037182125145826, -97.40445603510955, "Cache #2"],
-                [42.0213784737462, -97.4148411196977, "Cache #3"],
+                // [42.042224968766675, -97.43422780936554, "Cache #1"],
+                // [42.037182125145826, -97.40445603510955, "Cache #2"],
+                // [42.0213784737462, -97.4148411196977, "Cache #3"],
+                [42.00649492456861, -97.42520174828603, "1"],
+                [42.00551667682439, -97.42286544836425, "2"],
+                [42.00477264734259, -97.41960204529892, "3"],
+                [42.00256806446021, -97.41606051129051, "4"],
+                [42.00175510524491, -97.4262401038068, "5"],
             ];
             // ===================================
 
@@ -134,12 +137,31 @@
                 shadowSize: [41, 41]
             });
 
+            // Haversine formula: returns distance in miles
+            function getDistanceMiles(lat1, lng1, lat2, lng2) {
+                const R = 3958.8; // Earth radius in miles
+                const dLat = (lat2 - lat1) * Math.PI / 180;
+                const dLng = (lng2 - lng1) * Math.PI / 180;
+                const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                    Math.sin(dLng / 2) * Math.sin(dLng / 2);
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+                return R * c;
+            }
+
+            function formatDistance(miles) {
+                const feet = miles * 5280;
+                if (feet <= 1000) {
+                    return Math.round(feet) + ' ft';
+                }
+                return (Math.floor(miles * 100) / 100).toFixed(2) + ' mi';
+            }
+
             const markers = [];
             coordinates.forEach(function (coord) {
                 const marker = L.marker([coord[0], coord[1]], { icon: pinIcon }).addTo(map);
-                if (coord[2]) {
-                    marker.bindPopup(coord[2]);
-                }
+                marker.coordData = { lat: coord[0], lng: coord[1], label: coord[2] || '' };
+                marker.bindPopup(coord[2] || '');
                 markers.push(marker);
             });
 
@@ -149,11 +171,29 @@
                 map.fitBounds(group.getBounds().pad(0.2));
             }
 
+            // Track current user position for popup updates
+            let userLat = null;
+            let userLng = null;
+
+            function updateMarkerPopups() {
+                if (userLat === null) return;
+                markers.forEach(function (marker) {
+                    const d = marker.coordData;
+                    const miles = getDistanceMiles(userLat, userLng, d.lat, d.lng);
+                    const distText = formatDistance(miles);
+                    const content = '<strong>' + d.label + '</strong><br>Distance: ' + distText;
+                    marker.setPopupContent(content);
+                });
+            }
+
             // User location marker (blue circle)
             let userMarker = null;
             let userCircle = null;
 
             function showUserLocation(lat, lng, accuracy) {
+                userLat = lat;
+                userLng = lng;
+                updateMarkerPopups();
                 if (userMarker) {
                     userMarker.setLatLng([lat, lng]);
                     userCircle.setLatLng([lat, lng]);
