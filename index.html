@@ -157,6 +157,11 @@
                 return (Math.floor(miles * 100) / 100).toFixed(2) + ' mi';
             }
 
+            function formatAccuracy(accuracyMeters) {
+                const feet = accuracyMeters * 3.28084;
+                return '±' + Math.round(feet) + ' ft';
+            }
+
             const markers = [];
             coordinates.forEach(function (coord) {
                 const marker = L.marker([coord[0], coord[1]], { icon: pinIcon }).addTo(map);
@@ -194,8 +199,10 @@
                 userLat = lat;
                 userLng = lng;
                 updateMarkerPopups();
+                const userPopupContent = '<strong>Your Current Position</strong><br>Accuracy: ' + formatAccuracy(accuracy);
                 if (userMarker) {
                     userMarker.setLatLng([lat, lng]);
+                    userMarker.setPopupContent(userPopupContent);
                     userCircle.setLatLng([lat, lng]);
                     userCircle.setRadius(accuracy);
                 } else {
@@ -206,6 +213,7 @@
                         color: '#fff',
                         weight: 3
                     }).addTo(map);
+                    userMarker.bindPopup(userPopupContent);
 
                     userCircle = L.circle([lat, lng], {
                         radius: accuracy,
