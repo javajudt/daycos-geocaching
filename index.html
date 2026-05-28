@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Geocaching Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            height: 100%;
+            width: 100%;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        #permission-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #permission-overlay.visible {
+            display: flex;
+        }
+
+        .permission-dialog {
+            background: #fff;
+            border-radius: 12px;
+            padding: 2rem;
+            margin: 1rem;
+            max-width: 360px;
+            text-align: center;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+        }
+
+        .permission-dialog h2 {
+            margin-bottom: 0.75rem;
+            font-size: 1.25rem;
+            color: #333;
+        }
+
+        .permission-dialog p {
+            margin-bottom: 1.5rem;
+            color: #666;
+            font-size: 0.95rem;
+            line-height: 1.4;
+        }
+
+        .permission-dialog button {
+            background: #2196F3;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 0.85rem 2rem;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .permission-dialog button:active {
+            background: #1976D2;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="map"></div>
+
+    <div id="permission-overlay">
+        <div class="permission-dialog">
+            <h2>Location Access Required</h2>
+            <p id="permission-message">
+                This app needs your precise GPS location to show where you are on the map.
+                Please grant location permission when prompted.
+            </p>
+            <button id="permission-btn">Enable Location</button>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script>
+        (function () {
+            // ===== COORDINATES PLACEHOLDER =====
+            // Add your geocache coordinates here as [latitude, longitude, "label"] entries.
+            const coordinates = [
+                [42.042224968766675, -97.43422780936554, "Cache #1"],
+                [42.037182125145826, -97.40445603510955, "Cache #2"],
+                [42.0213784737462, -97.4148411196977, "Cache #3"],
+            ];
+            // ===================================
+
+            const map = L.map('map').setView([39.8283, -98.5795], 4);
+
+            L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(map);
+
+            // Add coordinate pins to the map
+            const pinIcon = L.icon({
+                iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+                iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+                shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+                iconSize: [25, 41],
+                iconAnchor: [12, 41],
+                popupAnchor: [1, -34],
+                shadowSize: [41, 41]
+            });
+
+            const markers = [];
+            coordinates.forEach(function (coord) {
+                const marker = L.marker([coord[0], coord[1]], { icon: pinIcon }).addTo(map);
+                if (coord[2]) {
+                    marker.bindPopup(coord[2]);
+                }
+                markers.push(marker);
+            });
+
+            // Fit map to markers if any exist
+            if (markers.length > 0) {
+                const group = L.featureGroup(markers);
+                map.fitBounds(group.getBounds().pad(0.2));
+            }
+
+            // User location marker (blue circle)
+            let userMarker = null;
+            let userCircle = null;
+
+            function showUserLocation(lat, lng, accuracy) {
+                if (userMarker) {
+                    userMarker.setLatLng([lat, lng]);
+                    userCircle.setLatLng([lat, lng]);
+                    userCircle.setRadius(accuracy);
+                } else {
+                    userMarker = L.circleMarker([lat, lng], {
+                        radius: 8,
+                        fillColor: '#4285F4',
+                        fillOpacity: 1,
+                        color: '#fff',
+                        weight: 3
+                    }).addTo(map);
+
+                    userCircle = L.circle([lat, lng], {
+                        radius: accuracy,
+                        fillColor: '#4285F4',
+                        fillOpacity: 0.1,
+                        color: '#4285F4',
+                        weight: 1
+                    }).addTo(map);
+
+                    // If no coordinate markers, center on user
+                    if (markers.length === 0) {
+                        map.setView([lat, lng], 15);
+                    }
+                }
+            }
+
+            // Permission handling
+            const overlay = document.getElementById('permission-overlay');
+            const message = document.getElementById('permission-message');
+            const btn = document.getElementById('permission-btn');
+
+            function showPermissionOverlay(msg) {
+                message.textContent = msg;
+                overlay.classList.add('visible');
+            }
+
+            function hidePermissionOverlay() {
+                overlay.classList.remove('visible');
+            }
+
+            function requestLocation() {
+                hidePermissionOverlay();
+
+                if (!navigator.geolocation) {
+                    showPermissionOverlay(
+                        'Geolocation is not supported by your browser. Please use a modern mobile browser.'
+                    );
+                    return;
+                }
+
+                navigator.geolocation.getCurrentPosition(
+                    function (position) {
+                        showUserLocation(
+                            position.coords.latitude,
+                            position.coords.longitude,
+                            position.coords.accuracy
+                        );
+                        // Watch for location updates
+                        startWatching();
+                    },
+                    function (error) {
+                        let msg;
+                        switch (error.code) {
+                            case error.PERMISSION_DENIED:
+                                msg = 'Location permission was denied. Please tap the button below and grant precise location access when prompted. On some devices, you may need to enable location in your browser or device settings.';
+                                break;
+                            case error.POSITION_UNAVAILABLE:
+                                msg = 'Your location could not be determined. Please ensure GPS is enabled on your device and try again.';
+                                break;
+                            case error.TIMEOUT:
+                                msg = 'Location request timed out. Please ensure you are in an area with GPS signal and try again.';
+                                break;
+                            default:
+                                msg = 'An unknown error occurred while requesting your location. Please try again.';
+                        }
+                        showPermissionOverlay(msg);
+                    },
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 15000,
+                        maximumAge: 0
+                    }
+                );
+            }
+
+            let watchId = null;
+
+            function startWatching() {
+                if (watchId !== null) return;
+                watchId = navigator.geolocation.watchPosition(
+                    function (position) {
+                        showUserLocation(
+                            position.coords.latitude,
+                            position.coords.longitude,
+                            position.coords.accuracy
+                        );
+                    },
+                    function () {
+                        // Silently ignore watch errors
+                    },
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 15000,
+                        maximumAge: 5000
+                    }
+                );
+            }
+
+            btn.addEventListener('click', requestLocation);
+
+            // Request location on load
+            requestLocation();
+        })();
+    </script>
+</body>
+
+</html>
