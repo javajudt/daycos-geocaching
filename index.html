@@ -29,6 +29,96 @@
             left: 0;
         }
 
+        #cache-list-toggle {
+            position: fixed;
+            top: 1rem;
+            left: 1rem;
+            z-index: 900;
+            border: none;
+            border-radius: 999px;
+            background: #fff;
+            color: #1f2937;
+            padding: 0.65rem 1rem;
+            font-size: 0.95rem;
+            font-weight: 600;
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+            cursor: pointer;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        #cache-list-panel {
+            position: fixed;
+            top: 4rem;
+            left: 1rem;
+            width: min(85vw, 320px);
+            max-height: calc(100vh - 5rem);
+            z-index: 900;
+            background: rgba(255, 255, 255, 0.97);
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            transition: opacity 0.2s ease, transform 0.2s ease;
+        }
+
+        #cache-list-panel.hidden {
+            opacity: 0;
+            transform: translateY(-8px);
+            pointer-events: none;
+        }
+
+        .cache-list-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+            border-bottom: 1px solid #e5e7eb;
+            background: #f8fafc;
+            padding-right: 0.6rem;
+        }
+
+        .cache-list-title {
+            padding: 0.8rem 0.9rem;
+            font-size: 0.9rem;
+            font-weight: 700;
+            color: #334155;
+        }
+
+        #cache-sort-toggle {
+            border: 1px solid #cbd5e1;
+            background: #fff;
+            color: #1e293b;
+            border-radius: 999px;
+            padding: 0.35rem 0.65rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        #cache-list {
+            list-style: none;
+            overflow: auto;
+        }
+
+        .cache-list-item {
+            width: 100%;
+            text-align: left;
+            border: 0;
+            border-bottom: 1px solid #f1f5f9;
+            background: transparent;
+            padding: 0.75rem 0.9rem;
+            font-size: 0.95rem;
+            color: #0f172a;
+            cursor: pointer;
+        }
+
+        .cache-list-item:active,
+        .cache-list-item.active {
+            background: #e2e8f0;
+        }
+
         #permission-overlay {
             display: none;
             position: fixed;
@@ -91,6 +181,14 @@
 
 <body>
     <div id="map"></div>
+    <button id="cache-list-toggle" type="button">Caches</button>
+    <aside id="cache-list-panel" aria-label="Cache list">
+        <div class="cache-list-header">
+            <div class="cache-list-title">All Caches</div>
+            <button id="cache-sort-toggle" type="button">Sort: A-Z</button>
+        </div>
+        <ul id="cache-list"></ul>
+    </aside>
 
     <div id="permission-overlay">
         <div class="permission-dialog">
@@ -182,6 +280,120 @@
                 markers.push(marker);
             });
 
+            const cacheListPanel = document.getElementById('cache-list-panel');
+            const cacheListEl = document.getElementById('cache-list');
+            const cacheListToggleBtn = document.getElementById('cache-list-toggle');
+            const cacheSortToggleBtn = document.getElementById('cache-sort-toggle');
+            let activeListButton = null;
+            let activeMarker = null;
+            let sortMode = 'alphabetical';
+
+            function showCacheList() {
+                cacheListPanel.classList.remove('hidden');
+                cacheListToggleBtn.textContent = 'Hide Caches';
+            }
+
+            function hideCacheList() {
+                cacheListPanel.classList.add('hidden');
+                cacheListToggleBtn.textContent = 'Show Caches';
+            }
+
+            function selectCache(marker, shouldCloseList) {
+                const latLng = marker.getLatLng();
+                const zoom = Math.max(map.getZoom(), 17);
+                map.setView(latLng, zoom, { animate: true });
+                marker.openPopup();
+                activeMarker = marker;
+
+                if (activeListButton) {
+                    activeListButton.classList.remove('active');
+                }
+
+                if (typeof marker.listButtonEl !== 'undefined') {
+                    marker.listButtonEl.classList.add('active');
+                    activeListButton = marker.listButtonEl;
+                }
+
+                if (shouldCloseList) {
+                    hideCacheList();
+                }
+            }
+
+            function updateSortToggleLabel() {
+                cacheSortToggleBtn.textContent = sortMode === 'alphabetical' ? 'Sort: A-Z' : 'Sort: Nearest';
+            }
+
+            function getSortedMarkers() {
+                const sorted = markers.slice();
+
+                if (sortMode === 'nearest' && userLat !== null && userLng !== null) {
+                    sorted.sort(function (a, b) {
+                        const da = getDistanceMiles(userLat, userLng, a.coordData.lat, a.coordData.lng);
+                        const db = getDistanceMiles(userLat, userLng, b.coordData.lat, b.coordData.lng);
+                        return da - db;
+                    });
+                } else {
+                    sorted.sort(function (a, b) {
+                        return (a.coordData.label || '').localeCompare(b.coordData.label || '', undefined, {
+                            numeric: true,
+                            sensitivity: 'base'
+                        });
+                    });
+                }
+
+                return sorted;
+            }
+
+            function populateCacheList() {
+                cacheListEl.innerHTML = '';
+                const sortedMarkers = getSortedMarkers();
+
+                sortedMarkers.forEach(function (marker, index) {
+                    const item = document.createElement('li');
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'cache-list-item';
+                    btn.textContent = marker.coordData.label || 'Cache ' + (index + 1);
+                    btn.addEventListener('click', function () {
+                        selectCache(marker, true);
+                    });
+
+                    marker.listButtonEl = btn;
+
+                    if (activeMarker === marker) {
+                        btn.classList.add('active');
+                        activeListButton = btn;
+                    }
+
+                    item.appendChild(btn);
+                    cacheListEl.appendChild(item);
+                });
+            }
+
+            cacheListToggleBtn.addEventListener('click', function () {
+                if (cacheListPanel.classList.contains('hidden')) {
+                    showCacheList();
+                } else {
+                    hideCacheList();
+                }
+            });
+
+            cacheSortToggleBtn.addEventListener('click', function () {
+                sortMode = sortMode === 'alphabetical' ? 'nearest' : 'alphabetical';
+                updateSortToggleLabel();
+                populateCacheList();
+            });
+
+            markers.forEach(function (marker) {
+                marker.on('click', function () {
+                    selectCache(marker, false);
+                });
+            });
+
+            updateSortToggleLabel();
+            populateCacheList();
+            showCacheList();
+
             // Fit map to markers if any exist
             if (markers.length > 0) {
                 const group = L.featureGroup(markers);
@@ -211,6 +423,9 @@
                 userLat = lat;
                 userLng = lng;
                 updateMarkerPopups();
+                if (sortMode === 'nearest') {
+                    populateCacheList();
+                }
                 const userPopupContent = '<strong>Your Current Position</strong><br>Accuracy: ' + formatAccuracy(accuracy);
                 if (userMarker) {
                     userMarker.setLatLng([lat, lng]);
