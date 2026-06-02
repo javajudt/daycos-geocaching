@@ -381,6 +381,7 @@
             let smoothedCompassLat = null;
             let smoothedCompassLng = null;
             let lastArrowRotation = null;
+            const ARROW_VISUAL_OFFSET_DEG = 180;
 
             function normalizeDegrees(deg) {
                 return (deg % 360 + 360) % 360;
@@ -462,7 +463,8 @@
                 }
 
                 if (lastArrowRotation === null || Math.abs(getSignedAngleDiff(arrowRotation, lastArrowRotation)) >= 1.5) {
-                    compassArrowEl.style.transform = 'rotate(' + arrowRotation + 'deg)';
+                    const calibratedRotation = normalizeDegrees(arrowRotation + ARROW_VISUAL_OFFSET_DEG);
+                    compassArrowEl.style.transform = 'rotate(' + calibratedRotation + 'deg)';
                     lastArrowRotation = arrowRotation;
                 }
             }
