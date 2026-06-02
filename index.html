@@ -376,9 +376,29 @@
             let userLng = null;
             let deviceHeading = null;
             let compassTrackingEnabled = false;
+            let smoothedHeading = null;
+            let smoothedBearing = null;
+            let smoothedCompassLat = null;
+            let smoothedCompassLng = null;
+            let lastArrowRotation = null;
 
             function normalizeDegrees(deg) {
                 return (deg % 360 + 360) % 360;
+            }
+
+            function getSignedAngleDiff(toDeg, fromDeg) {
+                return ((toDeg - fromDeg + 540) % 360) - 180;
+            }
+
+            function smoothAngle(previousDeg, nextDeg, alpha) {
+                if (previousDeg === null) return normalizeDegrees(nextDeg);
+                const delta = getSignedAngleDiff(nextDeg, previousDeg);
+                return normalizeDegrees(previousDeg + delta * alpha);
+            }
+
+            function smoothValue(previousValue, nextValue, alpha) {
+                if (previousValue === null) return nextValue;
+                return previousValue + (nextValue - previousValue) * alpha;
             }
 
             function getBearingDegrees(lat1, lng1, lat2, lng2) {
@@ -423,12 +443,16 @@
                 }
 
                 const miles = getDistanceMiles(userLat, userLng, target.lat, target.lng);
-                const bearing = getBearingDegrees(userLat, userLng, target.lat, target.lng);
+                const compassLat = smoothedCompassLat === null ? userLat : smoothedCompassLat;
+                const compassLng = smoothedCompassLng === null ? userLng : smoothedCompassLng;
+                const rawBearing = getBearingDegrees(compassLat, compassLng, target.lat, target.lng);
+                smoothedBearing = smoothAngle(smoothedBearing, rawBearing, 0.22);
+                const bearing = smoothedBearing;
                 compassDistanceEl.textContent = 'Distance: ' + formatDistance(miles);
 
                 let arrowRotation = bearing;
-                if (deviceHeading !== null) {
-                    const relative = normalizeDegrees(bearing - deviceHeading);
+                if (smoothedHeading !== null) {
+                    const relative = normalizeDegrees(bearing - smoothedHeading);
                     arrowRotation = relative;
                     compassDirectionEl.textContent =
                         'Direction: ' + Math.round(relative) + '\u00b0 ' + describeTurn(relative);
@@ -437,7 +461,10 @@
                         'Direction: ' + Math.round(bearing) + '\u00b0 ' + bearingToCardinal(bearing);
                 }
 
-                compassArrowEl.style.transform = 'rotate(' + arrowRotation + 'deg)';
+                if (lastArrowRotation === null || Math.abs(getSignedAngleDiff(arrowRotation, lastArrowRotation)) >= 1.5) {
+                    compassArrowEl.style.transform = 'rotate(' + arrowRotation + 'deg)';
+                    lastArrowRotation = arrowRotation;
+                }
             }
 
             function handleDeviceOrientation(event) {
@@ -451,6 +478,7 @@
 
                 if (heading === null) return;
                 deviceHeading = normalizeDegrees(heading);
+                smoothedHeading = smoothAngle(smoothedHeading, deviceHeading, 0.12);
                 updateCompass();
             }
 
@@ -612,6 +640,9 @@
             function showUserLocation(lat, lng, accuracy) {
                 userLat = lat;
                 userLng = lng;
+                // Damp noisy GPS jitter so bearing changes remain stable while walking.
+                smoothedCompassLat = smoothValue(smoothedCompassLat, lat, 0.16);
+                smoothedCompassLng = smoothValue(smoothedCompassLng, lng, 0.16);
                 updateMarkerPopups();
                 updateCompass();
                 if (sortMode === 'nearest') {
