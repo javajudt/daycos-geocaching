@@ -119,6 +119,73 @@
             background: #e2e8f0;
         }
 
+        #compass-widget {
+            position: fixed;
+            right: 1rem;
+            bottom: 1rem;
+            z-index: 900;
+            width: min(88vw, 240px);
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 14px;
+            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.25);
+            border: 1px solid #e2e8f0;
+            padding: 0.85rem;
+            display: none;
+            backdrop-filter: blur(4px);
+        }
+
+        #compass-widget.visible {
+            display: block;
+        }
+
+        .compass-title {
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: #475569;
+            margin-bottom: 0.35rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .compass-body {
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+        }
+
+        .compass-ring {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            border: 2px solid #cbd5e1;
+            background: linear-gradient(145deg, #f8fafc, #eef2f7);
+            display: grid;
+            place-items: center;
+            flex: 0 0 auto;
+        }
+
+        .compass-arrow {
+            width: 0;
+            height: 0;
+            border-left: 10px solid transparent;
+            border-right: 10px solid transparent;
+            border-bottom: 20px solid #0f172a;
+            transform-origin: center 65%;
+            transition: transform 0.15s linear;
+        }
+
+        .compass-meta {
+            min-width: 0;
+        }
+
+        #compass-distance,
+        #compass-direction {
+            font-size: 0.85rem;
+            color: #1e293b;
+            line-height: 1.35;
+        }
+
         #permission-overlay {
             display: none;
             position: fixed;
@@ -189,6 +256,19 @@
         </div>
         <ul id="cache-list"></ul>
     </aside>
+
+    <section id="compass-widget" aria-live="polite" aria-label="Direction to selected cache">
+        <div class="compass-title" id="compass-target">Select a cache</div>
+        <div class="compass-body">
+            <div class="compass-ring" aria-hidden="true">
+                <div class="compass-arrow" id="compass-arrow"></div>
+            </div>
+            <div class="compass-meta">
+                <div id="compass-distance">Distance: --</div>
+                <div id="compass-direction">Direction: --</div>
+            </div>
+        </div>
+    </section>
 
     <div id="permission-overlay">
         <div class="permission-dialog">
@@ -284,9 +364,121 @@
             const cacheListEl = document.getElementById('cache-list');
             const cacheListToggleBtn = document.getElementById('cache-list-toggle');
             const cacheSortToggleBtn = document.getElementById('cache-sort-toggle');
+            const compassWidget = document.getElementById('compass-widget');
+            const compassTargetEl = document.getElementById('compass-target');
+            const compassDistanceEl = document.getElementById('compass-distance');
+            const compassDirectionEl = document.getElementById('compass-direction');
+            const compassArrowEl = document.getElementById('compass-arrow');
             let activeListButton = null;
             let activeMarker = null;
             let sortMode = 'alphabetical';
+            let userLat = null;
+            let userLng = null;
+            let deviceHeading = null;
+            let compassTrackingEnabled = false;
+
+            function normalizeDegrees(deg) {
+                return (deg % 360 + 360) % 360;
+            }
+
+            function getBearingDegrees(lat1, lng1, lat2, lng2) {
+                const phi1 = lat1 * Math.PI / 180;
+                const phi2 = lat2 * Math.PI / 180;
+                const lambda1 = lng1 * Math.PI / 180;
+                const lambda2 = lng2 * Math.PI / 180;
+                const y = Math.sin(lambda2 - lambda1) * Math.cos(phi2);
+                const x = Math.cos(phi1) * Math.sin(phi2) -
+                    Math.sin(phi1) * Math.cos(phi2) * Math.cos(lambda2 - lambda1);
+                return normalizeDegrees(Math.atan2(y, x) * 180 / Math.PI);
+            }
+
+            function bearingToCardinal(deg) {
+                const labels = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+                const idx = Math.round(normalizeDegrees(deg) / 45) % 8;
+                return labels[idx];
+            }
+
+            function describeTurn(relativeBearing) {
+                if (relativeBearing <= 20 || relativeBearing >= 340) return 'ahead';
+                if (relativeBearing < 160) return 'to your right';
+                if (relativeBearing <= 200) return 'behind you';
+                return 'to your left';
+            }
+
+            function updateCompass() {
+                if (!activeMarker) {
+                    compassWidget.classList.remove('visible');
+                    return;
+                }
+
+                const target = activeMarker.coordData;
+                compassTargetEl.textContent = target.label || 'Selected Cache';
+                compassWidget.classList.add('visible');
+
+                if (userLat === null || userLng === null) {
+                    compassDistanceEl.textContent = 'Distance: waiting for GPS';
+                    compassDirectionEl.textContent = 'Direction: --';
+                    compassArrowEl.style.transform = 'rotate(0deg)';
+                    return;
+                }
+
+                const miles = getDistanceMiles(userLat, userLng, target.lat, target.lng);
+                const bearing = getBearingDegrees(userLat, userLng, target.lat, target.lng);
+                compassDistanceEl.textContent = 'Distance: ' + formatDistance(miles);
+
+                let arrowRotation = bearing;
+                if (deviceHeading !== null) {
+                    const relative = normalizeDegrees(bearing - deviceHeading);
+                    arrowRotation = relative;
+                    compassDirectionEl.textContent =
+                        'Direction: ' + Math.round(relative) + '\u00b0 ' + describeTurn(relative);
+                } else {
+                    compassDirectionEl.textContent =
+                        'Direction: ' + Math.round(bearing) + '\u00b0 ' + bearingToCardinal(bearing);
+                }
+
+                compassArrowEl.style.transform = 'rotate(' + arrowRotation + 'deg)';
+            }
+
+            function handleDeviceOrientation(event) {
+                let heading = null;
+
+                if (typeof event.webkitCompassHeading === 'number' && !Number.isNaN(event.webkitCompassHeading)) {
+                    heading = event.webkitCompassHeading;
+                } else if (typeof event.alpha === 'number' && !Number.isNaN(event.alpha)) {
+                    heading = 360 - event.alpha;
+                }
+
+                if (heading === null) return;
+                deviceHeading = normalizeDegrees(heading);
+                updateCompass();
+            }
+
+            function startCompassTracking() {
+                if (compassTrackingEnabled || !window.DeviceOrientationEvent) return;
+                window.addEventListener('deviceorientationabsolute', handleDeviceOrientation, true);
+                window.addEventListener('deviceorientation', handleDeviceOrientation, true);
+                compassTrackingEnabled = true;
+            }
+
+            function maybeEnableCompass(fromUserGesture) {
+                if (!window.DeviceOrientationEvent || compassTrackingEnabled) return;
+                if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    if (!fromUserGesture) return;
+                    DeviceOrientationEvent.requestPermission()
+                        .then(function (result) {
+                            if (result === 'granted') {
+                                startCompassTracking();
+                            }
+                        })
+                        .catch(function () {
+                            // If heading access fails, compass still works as a map-relative indicator.
+                        });
+                    return;
+                }
+
+                startCompassTracking();
+            }
 
             function showCacheList() {
                 cacheListPanel.classList.remove('hidden');
@@ -317,6 +509,8 @@
                 if (shouldCloseList) {
                     hideCacheList();
                 }
+
+                updateCompass();
             }
 
             function updateSortToggleLabel() {
@@ -400,10 +594,6 @@
                 map.fitBounds(group.getBounds().pad(0.2));
             }
 
-            // Track current user position for popup updates
-            let userLat = null;
-            let userLng = null;
-
             function updateMarkerPopups() {
                 if (userLat === null) return;
                 markers.forEach(function (marker) {
@@ -423,6 +613,7 @@
                 userLat = lat;
                 userLng = lng;
                 updateMarkerPopups();
+                updateCompass();
                 if (sortMode === 'nearest') {
                     populateCacheList();
                 }
@@ -471,8 +662,9 @@
                 overlay.classList.remove('visible');
             }
 
-            function requestLocation() {
+            function requestLocation(fromUserGesture) {
                 hidePermissionOverlay();
+                maybeEnableCompass(Boolean(fromUserGesture));
 
                 if (!navigator.geolocation) {
                     showPermissionOverlay(
@@ -539,10 +731,12 @@
                 );
             }
 
-            btn.addEventListener('click', requestLocation);
+            btn.addEventListener('click', function () {
+                requestLocation(true);
+            });
 
             // Request location on load
-            requestLocation();
+            requestLocation(false);
         })();
     </script>
 </body>
